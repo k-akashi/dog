@@ -1,4 +1,5 @@
-use std::net::{Ipv4Addr, UdpSocket};
+use std::io::ErrorKind;
+use std::net::{Ipv4Addr, Ipv6Addr, UdpSocket};
 
 use log::*;
 
@@ -24,33 +25,59 @@ impl UdpTransport {
     }
 }
 
-
 impl Transport for UdpTransport {
     fn send(&self, request: &Request) -> Result<Response, Error> {
         info!("Opening UDP socket");
         // TODO: This will need to be changed for IPv6 support.
-        let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
 
-        if self.addr.contains(':') {
-            socket.connect(&*self.addr)?;
+        let ip: Result<std::net::IpAddr, _> = self.addr.parse();
+        let socket = match ip {
+            Ok(_ip) => {
+                if _ip.is_ipv4() == true {
+                    let _socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
+                    if self.addr.contains(':') {
+                        _socket.connect(&*self.addr)?;
+                    }
+                    else {
+                        _socket.connect((&*self.addr, 53))?;
+                    }
+                    Some(_socket)
+                }
+                else if _ip.is_ipv6() {
+                    let _socket = UdpSocket::bind((Ipv6Addr::UNSPECIFIED, 0))?;
+                    _socket.connect((&*self.addr, 53))?;
+                    Some(_socket)
+                }
+                else {
+                    None
+                }
+            },
+            Err(_) => {
+                None
+            }
+        };
+
+        match socket {
+            Some(_socket) => {
+                debug!("Opened");
+
+                let bytes_to_send = request.to_bytes().expect("failed to serialise request");
+
+                info!("Sending {} bytes of data to {} over UDP", bytes_to_send.len(), self.addr);
+                let written_len = _socket.send(&bytes_to_send)?;
+                debug!("Wrote {} bytes", written_len);
+
+                info!("Waiting to receive...");
+                let mut buf = vec![0; 4096];
+                let received_len = _socket.recv(&mut buf)?;
+
+                info!("Received {} bytes of data", received_len);
+                let response = Response::from_bytes(&buf[.. received_len])?;
+                Ok(response)
+            },
+            None => {
+                Err(Error::NetworkError(std::io::Error::new(ErrorKind::Unsupported, "Unsupported Protocol")))
+            }
         }
-        else {
-            socket.connect((&*self.addr, 53))?;
-        }
-        debug!("Opened");
-
-        let bytes_to_send = request.to_bytes().expect("failed to serialise request");
-
-        info!("Sending {} bytes of data to {} over UDP", bytes_to_send.len(), self.addr);
-        let written_len = socket.send(&bytes_to_send)?;
-        debug!("Wrote {} bytes", written_len);
-
-        info!("Waiting to receive...");
-        let mut buf = vec![0; 4096];
-        let received_len = socket.recv(&mut buf)?;
-
-        info!("Received {} bytes of data", received_len);
-        let response = Response::from_bytes(&buf[.. received_len])?;
-        Ok(response)
     }
 }

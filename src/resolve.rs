@@ -103,11 +103,18 @@ fn system_nameservers() -> Result<Resolver, ResolverLookupError> {
         let line = line?;
 
         if let Some(nameserver_str) = line.strip_prefix("nameserver ") {
-            let ip: Result<std::net::Ipv4Addr, _> = nameserver_str.parse();
+            let ip: Result<std::net::IpAddr, _> = nameserver_str.parse();
             // TODO: This will need to be changed for IPv6 support.
 
             match ip {
-                Ok(_ip) => nameservers.push(nameserver_str.into()),
+                Ok(ipaddr) => {
+                    if ipaddr.is_ipv4() || ipaddr.is_ipv6() {
+                        nameservers.push(nameserver_str.into());
+                    }
+                    else {
+                        warn!("specified address is neither ipv4 nor ipv6: {:?}", line);
+                    }
+                },
                 Err(e)  => warn!("Failed to parse nameserver line {:?}: {}", line, e),
             }
         }
